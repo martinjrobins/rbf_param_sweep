@@ -59,7 +59,7 @@ find_package(H2Lib REQUIRED)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${H2Lib_LINKER_FLAGS}")
 add_definitions(-DHAVE_H2LIB)
 
-set(aboria_dirs /scratch/robinsonm/git/Aboria/src /scratch/robinsonm/git/Aboria/third-party)
+set(aboria_dirs Aboria/src Aboria/third-party)
 include_directories(SYSTEM ${H2Lib_INCLUDE_DIRS} ${aboria_dirs} ${EIGEN3_INCLUDE_DIR} ${THRUST_INCLUDE_DIR})
 
 add_executable(gaussian gaussian.cpp)
