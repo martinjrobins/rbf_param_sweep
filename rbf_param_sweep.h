@@ -310,6 +310,149 @@ void helper_operator_matrix(Op &G, const TrueOp &Gtrue,
   }
 }
 
+template <typename Op, typename TestOp>
+void solve_operator(const Op &G, const TestOp &Gtest,
+                    const Eigen::VectorXd &phi, const Eigen::VectorXd &phi_test,
+                    const int max_iter, const size_t Nbuffer, output_files &out,
+                    int index) {
+
+  std::cout << "SOLVING IDENTITY" << std::endl;
+  Eigen::BiCGSTAB<Op, Eigen::IdentityPreconditioner> bicg;
+
+  bicg.setMaxIterations(max_iter);
+  // bicg.setTolerance(X);
+  auto t0 = Clock::now();
+  bicg.compute(G);
+  auto t1 = Clock::now();
+  Eigen::VectorXd gamma = bicg.solve(phi);
+  auto t2 = Clock::now();
+  out.out_solve_iterations[index] << " " << std::setw(out.width)
+                                  << bicg.iterations();
+  out.out_solve_error[index] << " " << std::setw(out.width) << bicg.error();
+  out.out_solve_setup_time[index]
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+  out.out_solve_solve_time[index]
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+  out.out_solve_solve_memory[index] << " " << std::setw(out.width)
+                                    << G.rows() * sizeof(double) / 1e9;
+
+  Eigen::VectorXd phi_proposed = Gtest * gamma;
+
+  out.out_solve_test_error[index]
+      << " " << std::setw(out.width)
+      << (phi_proposed - phi_test).norm() / phi_test.norm();
+
+  std::cout << "SOLVING Schwartz" << std::endl;
+  Eigen::BiCGSTAB<Op, SchwartzPreconditioner<Eigen::LLT<Eigen::MatrixXd>>>
+      bicg2;
+  bicg2.setMaxIterations(max_iter);
+  bicg2.preconditioner().set_max_buffer_n(Nbuffer);
+  t0 = Clock::now();
+  bicg2.compute(G);
+  t1 = Clock::now();
+  gamma = bicg2.solve(phi);
+  t2 = Clock::now();
+
+  out.out_solve_iterations[index] << " " << std::setw(out.width)
+                                  << bicg2.iterations();
+  out.out_solve_error[index] << " " << std::setw(out.width) << bicg2.error();
+  out.out_solve_setup_time[index]
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+  out.out_solve_solve_time[index]
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+  auto &knots = G.get_first_kernel().get_row_elements();
+  const size_t ndomains = knots.size() / knots.get_max_bucket_size();
+  const size_t domain_size = 0.75 * knots.get_max_bucket_size() + Nbuffer;
+  out.out_solve_solve_memory[index]
+      << " " << std::setw(out.width)
+      << ndomains * std::pow(domain_size, 2) * sizeof(double) / 1e9;
+
+  phi_proposed = Gtest * gamma;
+
+  out.out_solve_test_error[index]
+      << " " << std::setw(out.width)
+      << (phi_proposed - phi_test).norm() / phi_test.norm();
+
+  std::cout << "SOLVING Nystrom" << std::endl;
+  Eigen::BiCGSTAB<Op, NystromPreconditioner<Eigen::LLT<Eigen::MatrixXd>>> bicg3;
+  bicg3.setMaxIterations(max_iter);
+  const size_t Ninducing =
+      0.5 * (-2.0 * knots.size() +
+             std::sqrt(4.0 * std::pow(knots.size(), 2) +
+                       4.0 * ndomains * std::pow(domain_size, 2)));
+  bicg3.preconditioner().set_number_of_random_particles(Ninducing);
+  bicg3.preconditioner().set_lambda(1e-5);
+  t0 = Clock::now();
+  bicg3.compute(G);
+  t1 = Clock::now();
+  gamma = bicg3.solve(phi);
+  t2 = Clock::now();
+
+  out.out_solve_iterations[index] << " " << std::setw(out.width)
+                                  << bicg3.iterations();
+  out.out_solve_error[index] << " " << std::setw(out.width) << bicg3.error();
+  out.out_solve_setup_time[index]
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+  out.out_solve_solve_time[index]
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+  out.out_solve_solve_memory[index]
+      << " " << std::setw(out.width)
+      << (Ninducing * G.rows() + std::pow(Ninducing, 2)) * sizeof(double) / 1e9;
+
+  phi_proposed = Gtest * gamma;
+
+  out.out_solve_test_error[index]
+      << " " << std::setw(out.width)
+      << (phi_proposed - phi_test).norm() / phi_test.norm();
+
+  /*
+  std::cout << "SOLVING Nystrom Swartz" << std::endl;
+  Eigen::BiCGSTAB<Op,
+                  NystromSwartzPreconditioner<Eigen::LLT<Eigen::MatrixXd>>>
+      bicg4;
+  bicg4.setMaxIterations(max_iter);
+  bicg4.preconditioner().nystrom().set_number_of_random_particles(
+      Ninducing);
+  bicg4.preconditioner().nystrom().set_lambda(1e-5);
+  bicg4.preconditioner().swartz().set_max_buffer_n(Nbuffer);
+  t0 = Clock::now();
+  bicg4.compute(G);
+  t1 = Clock::now();
+  gamma = bicg4.solve(phi);
+  t2 = Clock::now();
+
+  out.out_solve_iterations[index] << " " << std::setw(out.width)
+                                         << bicg4.iterations();
+  out.out_solve_error[index] << " " << std::setw(out.width)
+                                    << bicg4.error();
+  out.out_solve_setup_time[index]
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
+             .count();
+  out.out_solve_solve_time[index]
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1)
+             .count();
+  out.out_solve_solve_memory[index]
+      << " " << std::setw(out.width)
+      << (Ninducing * G.rows() + std::pow(Ninducing, 2)) * sizeof(double) /
+                 1e9 +
+             ndomains * std::pow(domain_size, 2) * sizeof(double) / 1e9;
+
+  phi_proposed = Gtest * gamma;
+
+  out.out_solve_test_error[index]
+      << " " << std::setw(out.width)
+      << (phi_proposed - phi_test).norm() / phi_test.norm();
+      */
+}
+
 template <typename Op, typename TrueOp, typename TestOp>
 void helper_operator(const Op &G, const TrueOp &Gtrue,
                      const Eigen::VectorXd &phi, const TestOp &Gtest,
@@ -334,153 +477,8 @@ void helper_operator(const Op &G, const TrueOp &Gtrue,
       << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
   if (do_solve) {
-
-    std::cout << "SOLVING IDENTITY" << std::endl;
-    Eigen::BiCGSTAB<Op, Eigen::IdentityPreconditioner> bicg;
-
-    bicg.setMaxIterations(max_iter);
-    // bicg.setTolerance(X);
-    t0 = Clock::now();
-    bicg.compute(G);
-    t1 = Clock::now();
-    Eigen::VectorXd gamma = bicg.solve(phi);
-    auto t2 = Clock::now();
-    out.out_solve_iterations[do_solve - 1] << " " << std::setw(out.width)
-                                           << bicg.iterations();
-    out.out_solve_error[do_solve - 1] << " " << std::setw(out.width)
-                                      << bicg.error();
-    out.out_solve_setup_time[do_solve - 1]
-        << " " << std::setw(out.width)
-        << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
-               .count();
-    out.out_solve_solve_time[do_solve - 1]
-        << " " << std::setw(out.width)
-        << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1)
-               .count();
-    out.out_solve_solve_memory[do_solve - 1] << " " << std::setw(out.width)
-                                             << G.rows() * sizeof(double) / 1e9;
-
-    Eigen::VectorXd phi_proposed = Gtest * gamma;
-
-    out.out_solve_test_error[do_solve - 1]
-        << " " << std::setw(out.width)
-        << (phi_proposed - phi_test).norm() / phi_test.norm();
-
-    std::cout << "SOLVING Schwartz" << std::endl;
-    Eigen::BiCGSTAB<Op, SchwartzPreconditioner<Eigen::LLT<Eigen::MatrixXd>>>
-        bicg2;
-    bicg2.setMaxIterations(max_iter);
-    bicg2.preconditioner().set_max_buffer_n(Nbuffer);
-    t0 = Clock::now();
-    bicg2.compute(G);
-    t1 = Clock::now();
-    gamma = bicg2.solve(phi);
-    t2 = Clock::now();
-
-    out.out_solve_iterations[do_solve - 1] << " " << std::setw(out.width)
-                                           << bicg2.iterations();
-    out.out_solve_error[do_solve - 1] << " " << std::setw(out.width)
-                                      << bicg2.error();
-    out.out_solve_setup_time[do_solve - 1]
-        << " " << std::setw(out.width)
-        << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
-               .count();
-    out.out_solve_solve_time[do_solve - 1]
-        << " " << std::setw(out.width)
-        << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1)
-               .count();
-    auto &knots = G.get_first_kernel().get_row_elements();
-    const size_t ndomains = knots.size() / knots.get_max_bucket_size();
-    const size_t domain_size = 0.75 * knots.get_max_bucket_size() + Nbuffer;
-    out.out_solve_solve_memory[do_solve - 1]
-        << " " << std::setw(out.width)
-        << ndomains * std::pow(domain_size, 2) * sizeof(double) / 1e9;
-
-    phi_proposed = Gtest * gamma;
-
-    out.out_solve_test_error[do_solve - 1]
-        << " " << std::setw(out.width)
-        << (phi_proposed - phi_test).norm() / phi_test.norm();
-
-    std::cout << "SOLVING Nystrom" << std::endl;
-    Eigen::BiCGSTAB<Op, NystromPreconditioner<Eigen::LLT<Eigen::MatrixXd>>>
-        bicg3;
-    bicg3.setMaxIterations(max_iter);
-    const size_t Ninducing =
-        0.5 * (-2.0 * knots.size() +
-               std::sqrt(4.0 * std::pow(knots.size(), 2) +
-                         4.0 * ndomains * std::pow(domain_size, 2)));
-    bicg3.preconditioner().set_number_of_random_particles(Ninducing);
-    bicg3.preconditioner().set_lambda(1e-5);
-    t0 = Clock::now();
-    bicg3.compute(G);
-    t1 = Clock::now();
-    gamma = bicg3.solve(phi);
-    t2 = Clock::now();
-
-    out.out_solve_iterations[do_solve - 1] << " " << std::setw(out.width)
-                                           << bicg3.iterations();
-    out.out_solve_error[do_solve - 1] << " " << std::setw(out.width)
-                                      << bicg3.error();
-    out.out_solve_setup_time[do_solve - 1]
-        << " " << std::setw(out.width)
-        << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
-               .count();
-    out.out_solve_solve_time[do_solve - 1]
-        << " " << std::setw(out.width)
-        << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1)
-               .count();
-    out.out_solve_solve_memory[do_solve - 1]
-        << " " << std::setw(out.width)
-        << (Ninducing * G.rows() + std::pow(Ninducing, 2)) * sizeof(double) /
-               1e9;
-
-    phi_proposed = Gtest * gamma;
-
-    out.out_solve_test_error[do_solve - 1]
-        << " " << std::setw(out.width)
-        << (phi_proposed - phi_test).norm() / phi_test.norm();
-
-    /*
-    std::cout << "SOLVING Nystrom Swartz" << std::endl;
-    Eigen::BiCGSTAB<Op,
-                    NystromSwartzPreconditioner<Eigen::LLT<Eigen::MatrixXd>>>
-        bicg4;
-    bicg4.setMaxIterations(max_iter);
-    bicg4.preconditioner().nystrom().set_number_of_random_particles(
-        Ninducing);
-    bicg4.preconditioner().nystrom().set_lambda(1e-5);
-    bicg4.preconditioner().swartz().set_max_buffer_n(Nbuffer);
-    t0 = Clock::now();
-    bicg4.compute(G);
-    t1 = Clock::now();
-    gamma = bicg4.solve(phi);
-    t2 = Clock::now();
-
-    out.out_solve_iterations[do_solve - 1] << " " << std::setw(out.width)
-                                           << bicg4.iterations();
-    out.out_solve_error[do_solve - 1] << " " << std::setw(out.width)
-                                      << bicg4.error();
-    out.out_solve_setup_time[do_solve - 1]
-        << " " << std::setw(out.width)
-        << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0)
-               .count();
-    out.out_solve_solve_time[do_solve - 1]
-        << " " << std::setw(out.width)
-        << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1)
-               .count();
-    out.out_solve_solve_memory[do_solve - 1]
-        << " " << std::setw(out.width)
-        << (Ninducing * G.rows() + std::pow(Ninducing, 2)) * sizeof(double) /
-                   1e9 +
-               ndomains * std::pow(domain_size, 2) * sizeof(double) / 1e9;
-
-    phi_proposed = Gtest * gamma;
-
-    out.out_solve_test_error[do_solve - 1]
-        << " " << std::setw(out.width)
-        << (phi_proposed - phi_test).norm() / phi_test.norm();
-        */
+    solve_operator(G, Gtest, phi, phi_test, max_iter, Nbuffer, out,
+                   do_solve - 1);
   }
 }
 
@@ -643,6 +641,101 @@ void helper_param_sweep(const Particles_t &particles, const size_t Ntest,
 #endif // HAVE_EIGEN
 }
 
+template <size_t Order, typename Particles_t, typename Kernel>
+void helper_param_sweep_cuda(const Particles_t &particles, const size_t Ntest,
+                             const Kernel &kernel, const double jitter,
+                             const size_t Nsubdomain, output_files &out) {
+#ifdef HAVE_EIGEN
+
+  out.new_line_start(particles.size() - Ntest, kernel.m_sigma,
+                     Particles_t::dimension, Order, Nsubdomain);
+
+  const int max_iter = 1000;
+  const unsigned int D = Particles_t::dimension;
+  const size_t n_subdomain = Nsubdomain;
+  const int Nbuffer = 4 * n_subdomain;
+  typedef position_d<D> position;
+
+  typedef Particles<std::tuple<function>, D, thrust::device_vector,
+                    CellListOrdered>
+      ParticlesCuda_t;
+  ParticlesCuda_t knots_cuda(particles.size() - Ntest);
+  ParticlesCuda_t test_cuda(Ntest);
+
+  Particles_t knots_cpu(particles.size() - Ntest);
+  Particles_t test_cpu(Ntest);
+
+  typedef typename ParticlesCuda_t::raw_const_reference raw_const_reference;
+
+  bbox<D> knots_box;
+  for (size_t i = 0; i < knots.size(); ++i) {
+    knots[i] = particles[i];
+    knots_box = knots_box + bbox<D>(get<position>(knots)[i]);
+  }
+
+  bbox<D> test_box;
+  for (size_t i = 0; i < test.size(); ++i) {
+    test[i] = particles[knots.size() + i];
+    test_box = test_box + bbox<D>(get<position>(test)[i]);
+  }
+
+  thrust::copy(get<function>(particles).begin(),
+               get<function>(particles).begin() + knots.size(),
+               get<function>(knots.begin()));
+  thrust::copy(get<position>(particles).begin(),
+               get<position>(particles).begin() + knots.size(),
+               get<position>(knots.begin()));
+  thrust::copy(get<function>(particles).begin() + knots.size(),
+               get<function>(particles).end(), get<function>(test).begin());
+  thrust::copy(get<position>(particles).begin() + knots.size(),
+               get<position>(particles).end(), get<position>(test).begin());
+
+  auto t0 = Clock::now();
+  knots.init_neighbour_search(knots_box.bmin, knots_box.bmax,
+                              Vector<bool, D>::Constant(false), n_subdomain);
+  auto t1 = Clock::now();
+  out.out_ds_setup_time
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+  test.init_neighbour_search(test_box.bmin, test_box.bmax,
+                             Vector<bool, D>::Constant(false), n_subdomain);
+  std::cout << "FINISHED INIT NEIGHBOUR" << std::endl;
+
+  auto self_kernel = [=] CUDA_HOST_DEVICE(raw_const_reference a,
+                                          raw_const_reference b) {
+    double ret = kernel(get<position>(a), get<position>(b));
+    if (get<id>(a) == get<id>(b)) {
+      ret += jitter;
+    }
+    return ret;
+  };
+
+  Eigen::VectorXd phi(knots.size());
+  Eigen::VectorXd phi_test(test.size());
+  thrust::copy(get<function>(knots).begin(), get<function>(knots).end(),
+               phi.data());
+  thrust::copy(get<function>(test).begin(), get<function>(test).end(),
+               phi_test.data());
+
+  t0 = Clock::now();
+  auto G = create_dense_operator(knots, knots, self_kernel);
+  t1 = Clock::now();
+  out.out_op_setup_time
+      << " " << std::setw(out.width)
+      << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+  out.out_op_memory << " " << std::setw(out.width) << 0.0 / 1e9;
+
+  auto G_test = create_dense_operator(test, knots, self_kernel);
+
+  std::cout << "APPLYING DENSE OPERATOR" << std::endl;
+  solve_operator(G, G_test, phi, phi_test, max_iter, Nbuffer, out, 1);
+
+  out.new_line_end();
+
+#endif // HAVE_EIGEN
+}
+
 template <typename Kernel> void helper_param_sweep_per_kernel() {
   Kernel kernel;
 
@@ -662,6 +755,54 @@ template <typename Kernel> void helper_param_sweep_per_kernel() {
       for (size_t n_subdomain = 50; n_subdomain < 400; n_subdomain += 100) {
         helper_param_sweep<2>(rosenbrock<14>(N, Ntest), Ntest, kernel, jitter,
                               n_subdomain, out);
+        /*
+        helper_param_sweep<2>(rosenbrock<10>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<2>(rosenbrock<8>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<3>(rosenbrock<5>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<4>(rosenbrock<4>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<6>(rosenbrock<3>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<5>(rosenbrock<3>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<4>(rosenbrock<3>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<10>(rosenbrock<2>(N, Ntest), Ntest, kernel, jitter,
+                               n_subdomain, out);
+        helper_param_sweep<8>(rosenbrock<2>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<6>(rosenbrock<2>(N, Ntest), Ntest, kernel, jitter,
+                              n_subdomain, out);
+        helper_param_sweep<10>(rosenbrock<1>(N, Ntest), Ntest, kernel, jitter,
+                               n_subdomain, out);
+                               */
+      }
+    }
+  }
+}
+
+template <typename Kernel> void helper_param_sweep_cuda() {
+  Kernel kernel;
+
+  std::cout << "-------------------------------------------\n"
+            << "Running cuda precon param sweep with kernel = " << kernel.m_name
+            << "....\n"
+            << "------------------------------------------" << std::endl;
+
+  output_files out("cuda_" + std::string(kernel.m_name));
+
+  const size_t Ntest = 1000;
+  const double jitter = 1e-5;
+
+  for (int N = 1000; N < 30000; N *= 2) {
+    for (double sigma = 0.9; sigma < 2.0; sigma += 0.4) {
+      kernel.set_sigma(sigma);
+      for (size_t n_subdomain = 50; n_subdomain < 400; n_subdomain += 100) {
+        helper_param_sweep_cuda<2>(rosenbrock<14>(N, Ntest), Ntest, kernel,
+                                   jitter, n_subdomain, out);
         /*
         helper_param_sweep<2>(rosenbrock<10>(N, Ntest), Ntest, kernel, jitter,
                               n_subdomain, out);
